@@ -1,0 +1,14 @@
+module.exports = {
+	name: 'messageCreate',
+		async execute ( client, message, member ) {
+            if (message.author.bot) return;
+            if(message.content.startsWith(mention.author.bot)) {
+            //Base de Datos.
+            var msg = ["Hola", "Calvo", "Sopenco"]
+            //Ecuacion MATH
+            let cal = Math.floor(Math.random() * msg.length)
+            //Enviar Mensaje
+            message.channel.send(`${cal}`)
+            }
+        }
+    }

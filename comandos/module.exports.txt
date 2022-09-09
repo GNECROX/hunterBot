@@ -1,0 +1,11 @@
+const Discord = require("discord.js");
+
+module.exports = {
+			name: "nombre_comando.js",
+			alias: ["alias"],
+            guildOnly: true,
+            cooldown: 10,
+	execute( client, message, args ) {
+
+    }
+};

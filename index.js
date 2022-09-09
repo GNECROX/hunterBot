@@ -1,0 +1,626 @@
+//Contenedores de Datos del INDEX.js
+const fs = require("node:fs");
+const {
+  Client,
+  Collection,
+  Intents
+} = require("discord.js");
+const {
+  token
+} = require("./config.json");
+const {
+  MessageEmbed,
+  Guild
+} = require("discord.js");
+const {
+  readdirSync
+} = require("fs");
+require('dotenv').config();
+const i18n = require('i18n');
+const Discord = require("discord.js");
+const intents = new Discord.Intents();
+const client = new Client({
+  intents: 32767
+});
+const mongoose = require("mongoose");
+const cooldowns = new Discord.Collection();
+//Arabaria
+
+//let prefix = "&!";
+
+//Datos de Mongoose y MongoDB
+mongoose
+  .connect(
+    "mongodb+srv://GNECROX:272727@hgdb.9gfb2.mongodb.net/?retryWrites=true&w=majority", {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    }
+  )
+  .then(() => {
+    console.log("MONGODB CONECTADO!");
+  })
+  .catch((error) => {
+    console.log(error);
+    console.log("No se Puede Conectar a MongoDB!!");
+  });
+
+//AQUI EMPIEZA EL BOT.
+
+//SLASHHANDLER para comandos con SLASH [ / ]
+client.slashcommands = new Discord.Collection();
+const slashcommandsFiles = fs
+  .readdirSync("./slashcmd")
+  .filter((file) => file.endsWith(".js"));
+
+for (const file of slashcommandsFiles) {
+  const slash = require(`./slashcmd/${file}`);
+  console.log(`✅|| ${file} Cargado.`);
+  client.slashcommands.set(slash.data.name, slash);
+}
+
+//Client para el SLASHHANDLER
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isCommand()) return;
+
+  const slashcmds = client.slashcommands.get(interaction.commandName);
+
+  if (!slashcmds) return;
+
+  try {
+    await slashcmds.run(client, interaction);
+  } catch (e) {
+    console.error(e);
+  }
+});
+
+//EVENTHANDLER
+const eventFiles = fs
+  .readdirSync("./events")
+  .filter((file) => file.endsWith(".js"));
+for (const file of eventFiles) {
+  const event = require(`./events/${file}`);
+  if (event.once) {
+    client.once(event.name, (...args) => event.run(...args, client));
+  } else {
+    client.on(event.name, (...args) => event.run(...args, client));
+  }
+}
+
+//CMDHANDLER para comandos con Prefix [ p! ]
+client.commands = new Discord.Collection();
+const commandFiles = fs
+  .readdirSync("./comandos")
+  .filter((file) => file.endsWith(".js"));
+
+for (const file of commandFiles) {
+  const command = require(`./comandos/${file}`);
+  client.commands.set(command.name, command);
+}
+//Client para el CMDHANDLER
+client.on("messageCreate", (message) => {
+  //Prefix por defecto
+  let prefix = "&!";
+
+  //Anti Bugs de Discord
+  if (message.author.bot) return;
+  if (message.channel.type === "dm") return;
+  if (!message.content.startsWith(prefix)) return;
+
+  //Exportador del Prefix a Comandos [Carpeta]
+  //let usuario = message.mentions.members.first() || message.member;
+  const args = message.content.slice(prefix.length).trim().split(/ +/g);
+  const command = args.shift().toLowerCase();
+
+  let cmd = client.commands.find(
+    (c) => c.name === command || (c.alias && c.alias.includes(command))
+  );
+
+  if (!cmd) {
+    message.reply(`NO EXISTE EL COMANDO, PRUEBA &!COMANDOS PARA UNA LISTA!`);
+  }
+  //Nota, esta linea, es para anular comandos en Mensajes Privados o DM
+  //se anade en el comando la siguiente Linea: [guildOnly: true,]< en el comando
+  if (command.guildOnly && message.channel.type === "dm") {
+    return message.reply(
+      `**${commandName}**` +
+      " => Este Comando es Exclusivo de Servidores, no puedes usarlo en DM. [usa t!dm para una lista de Comandos en DM]"
+    );
+  }
+  //Nota, esta linea, es aplicar Cooldown a los comandos
+  //Se usa anadiendo la siguiente linea a los comandos: [cooldown: segundos,] < En los comandos.
+  try {
+    if (!cooldowns.has(command.name)) {
+      cooldowns.set(command.name, new Discord.Collection());
+    }
+
+    //Creamos todo el sistema, para calcular el tiempo en SEGUNDOS.
+    const now = Date.now();
+    const timestamps = cooldowns.get(command.name);
+    const cooldownAmount = (command.cooldown || 3) * 1000;
+
+    //Le mandamos un Mensaje al Usuario de que Debe esperar.. para usar el comando otra vez.
+    if (timestamps.has(message.author.id))
+      return message.reply(
+        "**Debes esperar antes de poder usar el comando otra vez.**"
+      );
+
+    //Creamos eh Importamos el TIMESTAMPS junto al TIMEOUT para poder usar el COOLDOWN en los Comandos.
+    timestamps.set(message.author.id, now);
+    setTimeout(() => timestamps.delete(message.author.id), cooldownAmount);
+  } catch (error) {
+    console.error(error);
+    //Metemos un Replit.. para cuando algun comando falle.. este avise al Usuario.
+    message.reply("**Ocurrio un error ejecutando el Comando!**");
+  }
+  if (cmd) {
+    cmd.execute(client, message, args);
+  }
+});
+//AQUI TERMINA TODA LA CONFIGURACION DEL BOT.
+
+//Creamos un CLIENT para el SNIPE.
+client.on("messageDelete", async (message) => {
+  //llamamos al comando SNIPE usando la ruta
+  const snipe = require("./schemas/snipeschema");
+  //filtramos la Data con un AWAIT para que BUSQUE y OBTENGA los datos del Canal y nos lo mande.
+  let data = await snipe.findOne({
+    channelId: message.channel.id
+  });
+  //En caso de que.. no hallan datos (O sea.. sea NUEVO) crearemos la Base de Datos Nueva, para que se almacene.
+  if (!data) {
+    let newdata = new snipe({
+      channelId: message.channel.id,
+      message: message.content,
+      author: message.author.tag,
+      time: Math.floor(Date.now() / 1000),
+    });
+
+    return await newdata.save();
+  }
+  //Si ya Tenemos los Datos.. se usaran.
+  await snipe.findOneAndUpdate({
+    channelId: message.channel.id,
+    message: message.content,
+    author: message.author.tag,
+    time: Math.floor(Date.now() / 1000),
+  });
+});
+
+//Este Cliente es para el Sistema de Niveles.
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+
+  const levels = require("./schemas/levelsSchema");
+  const data = await levels.findOne({
+    guildId: message.guild.id,
+    userId: message.author.id,
+  });
+
+  let randomXp;
+  if (message.content.length <= 5) {
+    randomXp = Math.floor(Math.random() * 3) + 1;
+  } else if (message.content.length >= 5 && message.content.length <= 30) {
+    randomXp = Math.floor(Math.random() * 20) + 1;
+  } else if (message.content.length >= 30 && message.content.length <= 50) {
+    randomXp = Math.floor(Math.random() * 40) + 1;
+  } else if (message.content.length >= 60 && message.content.length <= 70) {
+    randomXp = Math.floor(Math.random() * 60) + 1;
+  } else if (message.content.length >= 70 && message.content.length <= 80) {
+    randomXp = Math.floor(Math.random() * 70) + 1;
+  } else if (message.content.length >= 80 && message.content.length <= 90) {
+    randomXp = Math.floor(Math.random() * 80) + 1;
+  } else if (message.content.length > 80) {
+    randomXp = Math.floor(Math.random() * 75) + 1;
+  }
+  if (!data) {
+    const newdata = new levels({
+      guildId: message.guild.id,
+      userId: message.author.id,
+      xp: randomXp,
+    });
+    return await newdata.save();
+  }
+
+  const xpTotal = data.xp + randomXp;
+  if (xpTotal >= data.limit) {
+    message.channel.send(
+      `Level UP: **${message.author.username}**! **${data.level + 1}**.`
+    );
+    await levels.findOneAndUpdate({
+      guildId: message.guild.id,
+      userId: message.author.id
+    }, {
+      xp: xpTotal,
+      level: data.level + 1,
+      limit: data.limit + 100
+    });
+  }
+  await levels.findOneAndUpdate({
+    guildId: message.guild.id,
+    userId: message.author.id
+  }, {
+    xp: xpTotal
+  });
+  //Console.log > Para tener un Registro en la Consola.
+  console.log(`Nombre del usuario: ${data.username}`);
+  console.log(`Random XP: ${randomXp}`);
+  console.log(`Cantidad de Mensajes: ${message.content.length}`);
+  console.log(`XP Total: ${xpTotal}`);
+  console.log(`Limite: ${data.limit}`);
+  console.log(`Level: ${data.level}`);
+});
+
+//&FIN
+
+//ESTO ES PARA MENCIONAR AL BOT
+client.on("messageCreate", (message) => {
+  if (message.content.match(new RegExp(`^<@!?${client.user.id}>( |)$`))) {
+    var frases = [
+      "Hola.. me llamabas?",
+      "Si puedes mencionarme.. pregunta algo util",
+      "Si buscas mi prefix... es: &!",
+    ];
+    const resp = frases[Math.floor(Math.random() * frases.length)];
+    const embed = new Discord.MessageEmbed()
+      .setDescription(`${resp}`)
+      .setColor("WHITE");
+    message.channel.send({
+      embeds: [embed]
+    });
+  }
+});
+//$FIN
+
+//CUANDO UN USUARIO SE UNE AL SERVIDOR!
+client.on("guildMemberAdd", async (member) => {
+  if (member.guild.id === "850148626923651093") {
+    //%PAQUETES
+    const discord = require("discord.js");
+    const {
+      createCanvas,
+      loadImage
+    } = require("canvas");
+    const {
+      join
+    } = require("path");
+    //%PAQUETES
+
+    //%CANVAS
+    const Canvas = require("canvas");
+    const canvas = createCanvas(1200, 635); //Tamaño de nuestra imagen
+    const ctx = canvas.getContext("2d");
+
+    const background = await Canvas.loadImage(
+      join(__filename, "../img/natzu.jpg")
+    ); //Imagen de fondo
+
+    ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = "#000000";
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+    const name = member.user.username;
+
+    if (name.length >= 16) {
+      ctx.font = "bold 100px Sans";
+      ctx.fillStyle = "#FF9B00";
+      ctx.fillText(name, canvas.width / 2, canvas.height / 2 + 100);
+    } else {
+      ctx.font = "bold 130px Sans";
+      ctx.fillStyle = "#FF9B00";
+      ctx.fillText(name, canvas.width / 2, canvas.height / 2 + 100);
+    }
+
+    const server = "Bienvenido a: \n" + member.guild.name;
+
+    ctx.font = "bold 75px sans-serif";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillText(server, canvas.width / 2, canvas.height / 2 - 100);
+
+    ctx.beginPath();
+    ctx.arc(315, canvas.height / 2, 250, 0, Math.PI * 2, true);
+    ctx.closePath();
+    ctx.clip();
+
+    const avatar = await loadImage(
+      member.user.displayAvatarURL({
+        format: "png"
+      })
+    );
+
+    ctx.drawImage(avatar, 65, canvas.height / 2 - 250, 500, 500);
+
+    const imagen = new discord.MessageAttachment(canvas.toBuffer(), "img.png");
+
+    //%CANVAS
+
+    //& ROL
+    const guild = member.guild;
+    const rol = guild.roles.cache.find(
+      (role) => role.name === "Miembro Oficial"
+    );
+    member.roles.add(rol);
+    //& ROL
+
+    const channel = member.guild.channels.cache.find(
+      (channel) => channel.id === "984505422469816380"
+    );
+
+    const reglas = member.guild.channels.cache.find(
+      (channel) => channel.id === "984566896978436116"
+    );
+
+    const me = new discord.MessageEmbed()
+      .setColor("RED")
+      .setTitle("Bienvenido/a")
+      .setDescription(`Lee las reglas en ${reglas}`)
+      .setImage("attachment://img.png")
+      .setTimestamp()
+      .setFooter({
+        text: member.guild.name
+      });
+
+    channel.send({
+      embeds: [me],
+      files: [imagen]
+    });
+  }
+});
+
+//Miembro Sale del Servidor.
+client.on("guildMemberRemove", async (member) => {
+  //%PAQUETES
+  if (member.guild.id === "850148626923651093") {
+    const discord = require("discord.js");
+    const {
+      createCanvas,
+      loadImage
+    } = require("canvas");
+    const {
+      join
+    } = require("path");
+    //%PAQUETES
+
+    //%CANVAS
+    const Canvas = require("canvas");
+    const canvas = createCanvas(1200, 635); //Tamaño de nuestra imagen
+    const ctx = canvas.getContext("2d");
+
+    const background = await Canvas.loadImage(
+      join(__filename, "../img/natzu.jpg")
+    ); //Imagen de fondo
+
+    ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = "#000000";
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+    const name = member.user.username;
+
+    if (name.length >= 16) {
+      ctx.font = "bold 100px Sans";
+      ctx.fillStyle = "#FF9B00";
+      ctx.fillText(name, canvas.width / 2, canvas.height / 2 + 100);
+    } else {
+      ctx.font = "bold 130px Sans";
+      ctx.fillStyle = "#FF9B00";
+      ctx.fillText(name, canvas.width / 2, canvas.height / 2 + 100);
+    }
+
+    const server = "Despidanse de: ";
+
+    ctx.font = "bold 75px sans-serif";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillText(server, canvas.width / 2, canvas.height / 2 - 100);
+
+    ctx.beginPath();
+    ctx.arc(315, canvas.height / 2, 250, 0, Math.PI * 2, true);
+    ctx.closePath();
+    ctx.clip();
+
+    const avatar = await loadImage(
+      member.user.displayAvatarURL({
+        format: "png"
+      })
+    );
+
+    ctx.drawImage(avatar, 65, canvas.height / 2 - 250, 500, 500);
+
+    const imagen = new discord.MessageAttachment(canvas.toBuffer(), "img.png");
+
+    //%CANVAS
+
+    //& ROL
+    //const guild = member.guild;
+    //const rol = guild.roles.cache.find((role) => role.name === "Miembro Oficial");
+    //member.roles.remove(rol);
+    //& ROL
+
+    const channel = member.guild.channels.cache.find(
+      (channel) => channel.id === "984505422469816380"
+    );
+
+    const reglas = member.guild.channels.cache.find(
+      (channel) => channel.id === "984566896978436116"
+    );
+
+    const me = new discord.MessageEmbed()
+      .setColor("RED")
+      .setTitle("Adios Campeon/na")
+      .setDescription("Saliendo del Servidor")
+      .setImage("attachment://img.png")
+      .setTimestamp()
+      .setFooter({
+        text: member.guild.name
+      });
+
+    channel.send({
+      embeds: [me],
+      files: [imagen]
+    });
+  }
+});
+
+//Evento READY para el AUTOROL!
+client.on("ready", () => {
+  client.channels.cache
+    .get("989595819021840404")
+    .messages.fetch("989639788132982865")
+    .then((msg) => {
+      //Filtraremos a los Usuarios y a los Bots.. para que el AutoRol detecte al Usuario.
+      let ifilter = (i) => !i.user.bot;
+      //Creamos un Collector para luego Añadir las Funciones al AutoRol en este caso es para que Pueda Otorgar dichos Roles.
+      const collector = msg.createMessageComponentCollector({
+        filter: ifilter,
+      });
+      //Activamos el Collector de manera ASYNCRONICA!
+      //Si añades mas Botones TODOS van dentro de este Collector a si
+      //#1 > if(){} < #2 > if(){}
+      collector.on("collect", async (i) => {
+        //Ponemos la ID del Botom.
+        if (i.customId === "b1") {
+          //Con esta Base, eliminaremos los roles que el usuario posea, menos el que planeamos añadirle.
+          if (i.member.roles.cache.has("985595866641465344")) {
+            await i.member.roles.remove("985595866641465344");
+          }
+          if (i.member.roles.cache.has("989635340555943946")) {
+            await i.member.roles.remove("989635340555943946");
+          }
+          if (i.member.roles.cache.has("989635390338113576")) {
+            await i.member.roles.remove("989635390338113576");
+          }
+          if (i.member.roles.cache.has("989635413754929234")) {
+            await i.member.roles.remove("989635413754929234");
+          }
+
+          //Declaramos que si el Usuario no posee el ROL que el Botom se lo otorgue.
+          //Usando la ID de Dicho ROL
+          if (!i.member.roles.cache.has("985595775176302692")) {
+            await i.member.roles.add("985595775176302692");
+            //Usamos Reply para decirle que se le ah Otorgado el ROL y ponemos el Modo EPHEMERAL para que solo el vea el Mensaje.
+            i.reply({
+              content: "*Se le han Quitado Otros Roles de Esta Seccion!*\n| <a:verify:988854744774758490> | **LE EH OTORGADO EL ROL A SU PERFIL:** <@&985595775176302692>",
+              ephemeral: true,
+            });
+          } else {
+            //En caso de Poser el ROL se lo hacemos Saber con este ELSE.
+            i.reply({
+              content: "| <a:bonk:988854711585218611> | **YA TIENES EL ROL:** <@&985595775176302692>",
+              ephemeral: true,
+            });
+          }
+        }
+
+        if (i.customId === "b2") {
+          if (i.member.roles.cache.has("985595775176302692")) {
+            await i.member.roles.remove("985595775176302692");
+          }
+          if (i.member.roles.cache.has("989635340555943946")) {
+            await i.member.roles.remove("989635340555943946");
+          }
+          if (i.member.roles.cache.has("989635390338113576")) {
+            await i.member.roles.remove("989635390338113576");
+          }
+          if (i.member.roles.cache.has("989635413754929234")) {
+            await i.member.roles.remove("989635413754929234");
+          }
+
+          if (!i.member.roles.cache.has("985595866641465344")) {
+            await i.member.roles.add("985595866641465344");
+            i.reply({
+              content: "*Se le han Quitado Otros Roles de Esta Seccion!*\n| <a:verify:988854744774758490> | **LE EH OTORGADO EL ROL A SU PERFIL:** <@&985595866641465344>",
+              ephemeral: true,
+            });
+          } else {
+            i.reply({
+              content: "| <a:bonk:988854711585218611> | **YA TIENES EL ROL:** <@&985595866641465344>",
+              ephemeral: true,
+            });
+          }
+        }
+        if (i.customId === "b3") {
+          if (i.member.roles.cache.has("985595775176302692")) {
+            await i.member.roles.remove("985595775176302692");
+          }
+          if (i.member.roles.cache.has("985595866641465344")) {
+            await i.member.roles.remove("985595866641465344");
+          }
+          if (i.member.roles.cache.has("989635390338113576")) {
+            await i.member.roles.remove("989635390338113576");
+          }
+          if (i.member.roles.cache.has("989635413754929234")) {
+            await i.member.roles.remove("989635413754929234");
+          }
+
+          if (!i.member.roles.cache.has("989635340555943946")) {
+            await i.member.roles.add("989635340555943946");
+            i.reply({
+              content: "*Se le han Quitado Otros Roles de Esta Seccion!*\n| <a:verify:988854744774758490> | **LE EH OTORGADO EL ROL A SU PERFIL:** <@&989635340555943946>",
+              ephemeral: true,
+            });
+          } else {
+            i.reply({
+              content: "| <a:bonk:988854711585218611> | **YA TIENES EL ROL:** <@&989635340555943946>",
+              ephemeral: true,
+            });
+          }
+        }
+        if (i.customId === "b4") {
+          if (i.member.roles.cache.has("985595775176302692")) {
+            await i.member.roles.remove("985595775176302692");
+          }
+          if (i.member.roles.cache.has("985595866641465344")) {
+            await i.member.roles.remove("985595866641465344");
+          }
+          if (i.member.roles.cache.has("989635340555943946")) {
+            await i.member.roles.remove("989635340555943946");
+          }
+          if (i.member.roles.cache.has("989635413754929234")) {
+            await i.member.roles.remove("989635413754929234");
+          }
+
+          if (!i.member.roles.cache.has("989635390338113576")) {
+            await i.member.roles.add("989635390338113576");
+            i.reply({
+              content: "*Se le han Quitado Otros Roles de Esta Seccion!*\n| <a:verify:988854744774758490> | **LE EH OTORGADO EL ROL A SU PERFIL:** <@&989635390338113576>",
+              ephemeral: true,
+            });
+          } else {
+            i.reply({
+              content: "| <a:bonk:988854711585218611> | **YA TIENES EL ROL:** <@&989635390338113576>",
+              ephemeral: true,
+            });
+          }
+        }
+        if (i.customId === "b5") {
+          if (i.member.roles.cache.has("985595775176302692")) {
+            await i.member.roles.remove("985595775176302692");
+          }
+          if (i.member.roles.cache.has("985595866641465344")) {
+            await i.member.roles.remove("985595866641465344");
+          }
+          if (i.member.roles.cache.has("989635340555943946")) {
+            await i.member.roles.remove("989635340555943946");
+          }
+          if (i.member.roles.cache.has("989635390338113576")) {
+            await i.member.roles.remove("989635390338113576");
+          }
+
+          if (!i.member.roles.cache.has("989635413754929234")) {
+            await i.member.roles.add("989635413754929234");
+            i.reply({
+              content: "*Se le han Quitado Otros Roles de Esta Seccion!*\n| <a:verify:988854744774758490> | **LE EH OTORGADO EL ROL A SU PERFIL:** <@&989635413754929234>",
+              ephemeral: true,
+            });
+          } else {
+            i.reply({
+              content: "| <a:bonk:988854711585218611> | **YA TIENES EL ROL:** <@&989635413754929234>",
+              ephemeral: true,
+            });
+          }
+        }
+      });
+    });
+});
+
+client.login(token);

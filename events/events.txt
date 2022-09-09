@@ -1,0 +1,7 @@
+const { ClientUser } = require("discord.js");
+
+module.exports = {
+  name: "Name_Evento",
+  async execute(client) {
+
+  }};
